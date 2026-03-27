@@ -351,6 +351,99 @@ function buildPhotoRecords() {
   return [...fixedRecords, ...extraRecords];
 }
 
+async function buildPhotoRecordsWithData() {
+  const dt = new Date(workDateTime.value);
+  const date = toDateOnly(dt);
+  const ym = date.slice(0, 7);
+  const building = buildingSelect.value;
+  const folderBase = `${building}/${ym}`;
+
+  const fixed = [
+    { id: "photoToiletBefore", label: "화장실_전" },
+    { id: "photoToiletAfter", label: "화장실_후" },
+    { id: "photoHallBefore", label: "1층복도_전" },
+    { id: "photoHallAfter", label: "1층복도_후" },
+  ];
+
+  const fixedRecords = await Promise.all(
+    fixed.map(async (x) => {
+      const input = document.getElementById(x.id);
+      const file = input.files?.[0];
+      if (!file) return null;
+      const fileName = `${date}_${x.label}.jpg`;
+      const dataUrl = await fileToJpegDataUrl(file);
+      return {
+        type: "고정",
+        title: x.label,
+        fileName,
+        path: `${folderBase}/${fileName}`,
+        dataUrl,
+      };
+    })
+  );
+
+  const extraRows = [...extraPhotosEl.querySelectorAll(".extra-row")];
+  const extraRecords = await Promise.all(
+    extraRows.map(async (row) => {
+      const name = row.querySelector('input[type="text"]').value.trim();
+      const fileInput = row.querySelector('input[type="file"]');
+      const file = fileInput.files?.[0];
+      if (!name || !file) return null;
+      const safe = sanitizeName(name);
+      const fileName = `${date}_${safe}.jpg`;
+      const dataUrl = await fileToJpegDataUrl(file);
+      return {
+        type: "추가",
+        title: name,
+        fileName,
+        path: `${folderBase}/${fileName}`,
+        dataUrl,
+      };
+    })
+  );
+
+  // 안전장치: 너무 많은/큰 사진은 전송 실패(한도) 가능성이 커서 제한
+  const all = [...fixedRecords, ...extraRecords].filter(Boolean);
+  return all.slice(0, 12);
+}
+
+async function fileToJpegDataUrl(file) {
+  // 모바일 전송량을 줄이기 위해 최대 1280px로 축소 + JPEG로 변환
+  const img = await loadImageFromFile(file);
+  const maxSide = 1280;
+  const { width, height } = fitWithin(img.width, img.height, maxSide);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, width, height);
+
+  return canvas.toDataURL("image/jpeg", 0.72);
+}
+
+function fitWithin(w, h, maxSide) {
+  if (w <= maxSide && h <= maxSide) return { width: w, height: h };
+  const scale = w >= h ? maxSide / w : maxSide / h;
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
+}
+
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
+}
+
 async function saveTodayRecord() {
   const dt = new Date(workDateTime.value);
   if (Number.isNaN(dt.getTime())) {
@@ -363,7 +456,7 @@ async function saveTodayRecord() {
     building: buildingSelect.value,
     appliedRuleSource: state.checklistSource,
     checklist: state.checklist,
-    photos: buildPhotoRecords(),
+    photos: await buildPhotoRecordsWithData(),
   };
 
   const records = loadRecords();
